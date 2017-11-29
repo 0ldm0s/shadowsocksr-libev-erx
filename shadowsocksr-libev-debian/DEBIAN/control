@@ -1,0 +1,5 @@
+Package: shadowsocksr-libev
+Version: 0.01
+Architecture: all
+Description: ShadowsocksR-libev for Edgerouter X
+Maintainer: leavic@gmail.com

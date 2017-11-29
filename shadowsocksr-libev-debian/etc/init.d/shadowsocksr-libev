@@ -1,0 +1,177 @@
+#! /bin/sh
+### BEGIN INIT INFO
+# Provides:          shadowsocksr
+# Required-Start:    $syslog $time $remote_fs
+# Required-Stop:     $syslog $time $remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Description:       Start shadowsocksr daemon
+### END INIT INFO
+
+PATH=/bin:/usr/bin:/sbin:/usr/sbin:/usr/local/bin
+DAEMON_SS_REDIR=/usr/local/bin/ss-redir
+DAEMON_SS_LOCAL=/usr/local/bin/ss-local
+DAEMON_DNS_FORWARDER=/usr/local/bin/hev-dns-forwarder
+DAEMON_CHINADNS=/usr/local/bin/chinadns
+
+
+#/config/shadowsocksr/bin/DNS_FORWARDER -c /config/shadowsocksr/conf/DNS_FORWARDER.conf
+#Change ISPDNS to your ISP dns or public dns, like 1.2.4.8, 114.114.114.114
+ISPDNS=119.29.29.29
+
+#This source ip range will not go through shadowsocksr, uncomment if you want to use it
+#BYPASS_RANGE=192.168.123.0/24
+
+#Make sure your shadowsocksr config file is correct!
+SSCONFIG=/etc/shadowsocksr-libev/config.json
+
+#Check ChinaDNS readme page on github to know how to generate latest chnroute.txt
+CHNROUTE=/etc/shadowsocksr-libev/chnroute.txt
+
+
+PIDFILE_SS_REDIR=/var/run/ss-redir.pid
+PIDFILE_SS_LOCAL=/var/run/ss-local.pid
+PIDFILE_DNS_FORWARDER=/var/run/dns-forwarder.pid
+PIDFILE_CHINADNS=/var/run/chinadns.pid
+
+
+test -x $DAEMON_SS_REDIR || exit 0
+test -x $DAEMON_SS_LOCAL || exit 0
+test -x $DAEMON_DNS_FORWARDER || exit 0
+test -x $DAEMON_CHINADNS || exit 0
+
+. /lib/lsb/init-functions
+
+#Test if network ready (pppoe)
+test_network() {
+	curl --retry 1 --silent --connect-timeout 2 -I www.baidu.com  > /dev/null
+	if [ "$?" != "0" ]; then
+		echo 'network not ready, wait for 5 seconds ...'
+		sleep 5
+	fi
+}
+
+get_server_ip() {
+	ss_server_host=`grep -o "\"server\"\s*:\s*\"\?[-0-9a-zA-Z.]\+\"\?" $SSCONFIG|sed -e 's/"//g'|awk -F':' '{print $2}'|sed -e 's/\s//g'`
+	if [ -z $ss_server_host ];then
+	  echo "Error : ss_server_host is empty"
+	  exit 0
+	fi
+
+	#test if domain or ip
+	if echo $ss_server_host | grep -q '^[^0-9]'; then
+	  #echo "ss_server_host : $ss_server_host"
+	  ss_server_ip=`getent hosts $ss_server_host | awk '{ print $1 }'`
+	else
+	  ss_server_ip=$ss_server_host
+	fi
+
+	if [ -z "$ss_server_ip" ];then
+	  echo "Error : ss_server_ip is empty"
+	  exit 0
+	fi
+}
+
+gen_iplist() {
+	cat <<-EOF
+		0.0.0.0/8
+		10.0.0.0/8
+		100.64.0.0/10
+		127.0.0.0/8
+		169.254.0.0/16
+		172.16.0.0/12
+		192.168.0.0/16
+		224.0.0.0/4
+		240.0.0.0/4
+		255.255.255.255
+		110.232.176.0/22
+		$ss_server_ip
+		$(cat ${CHNROUTE:=/dev/null} 2>/dev/null)
+EOF
+}
+
+rules_add() {
+	ipset -! -R <<-EOF || return 1
+		create ss_ipset_bypass hash:net
+		$(gen_iplist | sed -e "s/^/add ss_ipset_bypass /")
+EOF
+	iptables -t nat -N shadowsocksr && \
+	iptables -t nat -A shadowsocksr -m set --match-set ss_ipset_bypass dst -j RETURN && \
+	iptables -t nat -A shadowsocksr -p tcp -j REDIRECT --to-ports 1080 && \
+	iptables -t nat -A PREROUTING -p tcp -j shadowsocksr && \
+	iptables -t nat -A OUTPUT -p tcp -j shadowsocksr
+	if [ "$BYPASS_RANGE" ]; then
+		iptables -t nat -I shadowsocksr -s $BYPASS_RANGE -j RETURN
+	fi
+	return $?
+}
+
+rules_flush() {
+	iptables -t nat -F shadowsocksr
+	iptables -t nat -D PREROUTING -p tcp -j shadowsocksr
+	iptables -t nat -D OUTPUT -p tcp -j shadowsocksr
+	iptables -t nat -X shadowsocksr
+	ipset -X ss_ipset_bypass
+	return $?
+}
+
+case "$1" in
+  start)
+	test_network
+	get_server_ip
+	#echo "ss_server_ip:$ss_server_ip"
+
+	log_daemon_msg "Starting ss-redir" "ss-redir"
+	start-stop-daemon -S -p $PIDFILE_SS_REDIR --oknodo --startas $DAEMON_SS_REDIR -- -u -l 1080 -c $SSCONFIG -f $PIDFILE_SS_REDIR
+	log_end_msg $?
+
+	log_daemon_msg "Starting ss-local" "ss-local"
+	start-stop-daemon -S -p $PIDFILE_SS_LOCAL --oknodo --startas $DAEMON_SS_LOCAL -- -u -l 1081 -c $SSCONFIG -f $PIDFILE_SS_LOCAL
+	log_end_msg $?
+
+	log_daemon_msg "Starting hev-dns-forwarder" "hev-dns-forwarder"
+	start-stop-daemon -S -p $PIDFILE_DNS_FORWARDER --oknodo -b -m $PIDFILE_DNS_FORWARDER --startas $DAEMON_DNS_FORWARDER -- -s 8.8.4.4:53
+	log_end_msg $?
+
+	log_daemon_msg "Starting chinadns" "chinadns"
+	start-stop-daemon -S -p $PIDFILE_CHINADNS --oknodo -b -m $PIDFILE_CHINADNS --startas $DAEMON_CHINADNS -- -p 5353 -s $ISPDNS,127.0.0.1:5300 -c $CHNROUTE
+	log_end_msg $?
+
+	log_daemon_msg "Adding iptables rules, ss_server_ip" `for i in $ss_server_ip; do p=$p$i","; done; echo ${p%,}`
+	rules_add
+	log_end_msg $?
+    ;;
+  stop)
+	log_daemon_msg "Stopping ss-redir" "ss-redir"
+	start-stop-daemon -K -p $PIDFILE_SS_REDIR --oknodo
+	log_end_msg $?
+	log_daemon_msg "Stopping ss-local" "ss-local"
+	start-stop-daemon -K -p $PIDFILE_SS_LOCAL --oknodo
+	log_end_msg $?
+	log_daemon_msg "Stopping hev-dns-forwarder" "hev-dns-forwarder"
+	start-stop-daemon -K -p $PIDFILE_DNS_FORWARDER --oknodo
+	log_end_msg $?
+	log_daemon_msg "Stopping chinadns" "chinadns"
+	start-stop-daemon -K -p $PIDFILE_CHINADNS --oknodo
+	log_end_msg $?
+	log_daemon_msg "Deleteing iptables rules" "rules_flush"
+	rules_flush
+	log_end_msg $?
+    ;;
+  force-reload|restart)
+    $0 stop
+    $0 start
+    ;;
+  status)
+    status_of_proc -p $PIDFILE_SS_REDIR $DAEMON_SS_REDIR ss-redir
+    status_of_proc -p $PIDFILE_SS_LOCAL $DAEMON_SS_LOCAL ss-local
+    status_of_proc -p $PIDFILE_DNS_FORWARDER $DAEMON_DNS_FORWARDER hev-dns-forwarder
+    status_of_proc -p $PIDFILE_CHINADNS $DAEMON_CHINADNS chinadns
+    ;;
+  *)
+    echo "Usage: /etc/init.d/shadowsocksr {start|stop|restart|force-reload|status}"
+    exit 1
+    ;;
+esac
+
+exit 0

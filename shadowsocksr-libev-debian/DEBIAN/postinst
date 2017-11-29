@@ -1,0 +1,6 @@
+#!/bin/sh
+set -e
+update-rc.d -f shadowsocksr-libev defaults
+sleep 1
+/etc/init.d/shadowsocksr-libev restart
+exit 0
