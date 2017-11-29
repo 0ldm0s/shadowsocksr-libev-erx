@@ -1,4 +1,4 @@
-# shadowsoksr_edgerouter_x
+# shadowsocksr_edgerouter_x
 shadowsocksr-libev debian package for EdgerRouter X
 
 dpkg -b shadowsocksr-libev-debian
