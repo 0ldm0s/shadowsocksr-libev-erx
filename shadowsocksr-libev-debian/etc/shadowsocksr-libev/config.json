@@ -1,11 +1,13 @@
 {
-    "server":"server_domain_or_ip",
+    "server":"www.gov.cn",
     "server_port":8964,
     "local_address":"0.0.0.0",
     "local_port":1080,
-    "password":"password",
+    "password":"Password",
     "timeout":120,
     "method":"rc4-md5",
-    "protocol": "auth_aes128_md5",
-    "obfs": "tls1.2_ticket_auth"
+    "protocol":"auth_aes128_md5",
+    "protocol_param":"",
+    "obfs":"tls1.2_ticket_auth",
+    "obfs_param":""
 }

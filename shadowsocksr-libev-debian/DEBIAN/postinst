@@ -1,6 +1,57 @@
 #!/bin/sh
 set -e
 update-rc.d -f shadowsocksr-libev defaults
-sleep 1
-/etc/init.d/shadowsocksr-libev restart
+
+CONFIG_FILE=/etc/shadowsocksr-libev/config.json
+
+read -p 'Config SSR server now (y/n）?' do_config
+
+if [ "$do_config" = "y" ];
+then
+	echo 'Starting Config';
+
+	read -p 'Server Domain Or IP:' server_addr; 
+	[ -z "${server_addr}" ] && server_addr="www.gov.cn";
+	sed -i -E "s/(\"server\":\").*(\",)/\1$server_addr\2/g" $CONFIG_FILE
+
+	read -p "Server Port:" server_port;
+	[ -z "${server_port}" ] && server_port=8964;
+	sed -i -E "s/(\"server_port\":).*(,)/\1$server_port\2/g" $CONFIG_FILE
+	
+	read -p "Passowrd:" password;
+	[ -z "${password}" ] && password="Password";
+	echo $password
+	sed -i -E "s/(\"password\":\").*(\",)/\1$password\2/g" $CONFIG_FILE
+
+
+	read -p "Encrypt_Method (Default rc4-md5):" encrypt_method;
+	[ -z "${encrypt_method}" ] && encrypt_method="rc4-md5";
+	echo $encrypt_method;
+	sed -i -E "s/(\"method\":\").*(\",)/\1$encrypt_method\2/g" $CONFIG_FILE
+
+	read -p "Protocol (Default auth_aes128_md5):" protocol;
+	[ -z "${protocol}" ] && protocol="auth_aes128_md5";
+	sed -i -E "s/(\"protocol\":\").*(\",)/\1$protocol\2/g" $CONFIG_FILE
+
+	read -p "Protocol Param (Default None):" protocol_param;
+	[ -z "${protocol_param}" ] && protocol_param="";
+	sed -i -E "s/(\"protocol_param\":\").*(\",)/\1$protocol_param\2/g" $CONFIG_FILE
+
+	read -p "Obfs (Default tls1.2_ticket_auth):" obfs;
+	[ -z "${obfs}" ] && obfs="tls1.2_ticket_auth";
+	echo $obfs
+	sed -i -E "s/(\"obfs\":\").*(\",)/\1$obfs\2/g" $CONFIG_FILE
+
+
+	read -p "Obfs Param (Default None):" obfs_param;
+	[ -z "${obfs_param}" ] && obfs_param="";
+	sed -i -E "s/(\"obfs_param\":\").*(\")/\1$obfs_param\2/g" $CONFIG_FILE
+
+	echo 'Starting ShadowsocksR service....';
+	/etc/init.d/shadowsocksr-libev restart;
+else
+	echo 'You should manual config /etc/shadowsocksr-libev/config.json file and start SSR service manually!';
+fi
+
+
 exit 0
